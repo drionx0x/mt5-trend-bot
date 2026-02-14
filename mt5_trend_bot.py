@@ -217,12 +217,19 @@ class BotConfig:
                 'timeframe': 'H1'  # M1, M5, M15, M30, H1, H4, D1, W1, MN1
             },
             'filters': {
-                'use_volume_filter': False,
+                'use_volume_filter': False,9
                 'min_volume': 1000,
                 'use_rsi_filter': False,
                 'rsi_period': 14,
                 'rsi_overbought': 70,
                 'rsi_oversold': 30
+            }
+            'atr_settings': {
+            'use_atr': False,           # Enable/disable ATR
+            'atr_period': 14,           # ATR calculation period
+            'atr_stop_multiplier': 2,   # Stop loss = ATR * multiplier
+            'atr_tp_multiplier': 3,     # Take profit = ATR * multiplier
+            'atr_trailing_multiplier': 1.5  # Trailing distance = ATR * multiplier
             }
         }
     
