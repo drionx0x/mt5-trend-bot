@@ -49,7 +49,9 @@ This project implements a classic **moving average crossover strategy** (Golden 
 
    ```bash
    pip install MetaTrader5 pandas numpy
-   # or
+   ```
+# or
+```bash
    pip install -r requirements.txt
    ```
 
