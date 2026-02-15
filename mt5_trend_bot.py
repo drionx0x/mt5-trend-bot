@@ -1,18 +1,23 @@
-"""╔══════════════════════════════════════════════════════════════════════╗
-   ║                                                                      ║
-   ║     ULTIMATE MT5 MULTI-SYMBOL TRADING BOT                          ║
-   ║     Combined: SMA + ADX + ATR + Trailing Stops + Performance        ║
-   ║                                                                      ║
-   ╚══════════════════════════════════════════════════════════════════════╝
-   Features:
+"""
+╔══════════════════════════════════════════════════════════════════════╗
+║                                                                      ║
+║     ULTIMATE MT5 HYBRID SMC + INDICATOR TRADING BOT                 ║
+║     Strategy: Market Structure + Liquidity Sweeps + BOS + ADX/ATR   ║
+║                                                                      ║
+╚══════════════════════════════════════════════════════════════════════╝
+Features:
 - 8 Symbols Trading Simultaneously (Metals, Currencies, Crypto)
-- SMA Crossover for Entry Signals
+- Market Structure Detection (HH/HL, LH/LL)
+- Liquidity Sweep Detection
+- Break of Structure (BOS) Confirmation
+- Displacement Detection (Strong Momentum)
 - ADX > 25 Filter for Trend Strength
 - ATR-Based Dynamic Stop Loss & Take Profit
+- Session Filters (London/NY/Asia)
+- Confidence-Based Position Sizing
 - Trailing Stop (locks in profits)
 - Performance Tracking & Statistics
-- Dynamic Lot Sizing Based on Balance
-- Thread-Safe Operation"""
+"""
 
 import sys
 import pkg_resources
@@ -46,7 +51,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('ultimate_bot.log'),
+        logging.FileHandler('hybrid_smc_bot.log'),
         logging.StreamHandler()
     ]
 )
@@ -54,11 +59,11 @@ logger = logging.getLogger(__name__)
 
 
 # ═══════════════════════════════════════════════════════════════════
-#  PERFORMANCE TRACKER
+#  PERFORMANCE TRACKER (Enhanced)
 # ═══════════════════════════════════════════════════════════════════
 
 class PerformanceTracker:
-    """Track performance across all symbols"""
+    """Track performance across all symbols with SMC metrics"""
 
     def __init__(self):
         self.trades = []
@@ -66,12 +71,19 @@ class PerformanceTracker:
         self.initial_balance = None
         self.peak_balance = None
         self.max_drawdown = 0
+        self.smc_stats = {
+            'liquidity_sweeps': 0,
+            'bos_signals': 0,
+            'displacement_signals': 0,
+            'confluence_trades': 0
+        }
 
     def set_initial_balance(self, balance):
         self.initial_balance = balance
         self.peak_balance = balance
 
     def add_trade(self, trade_data):
+        """Record trade with SMC metrics"""
         self.trades.append({
             'timestamp': datetime.now(),
             'symbol': trade_data['symbol'],
@@ -81,8 +93,23 @@ class PerformanceTracker:
             'profit': trade_data['profit'],
             'pips': trade_data['pips'],
             'balance': trade_data['balance'],
-            'duration_minutes': trade_data.get('duration_minutes', 0)
+            'duration_minutes': trade_data.get('duration_minutes', 0),
+            'confidence': trade_data.get('confidence', 0),
+            'structure': trade_data.get('structure', 'UNKNOWN'),
+            'sweep_detected': trade_data.get('sweep_detected', False),
+            'bos_detected': trade_data.get('bos_detected', False),
+            'displacement_detected': trade_data.get('displacement_detected', False)
         })
+
+        # Update SMC stats
+        if trade_data.get('sweep_detected'):
+            self.smc_stats['liquidity_sweeps'] += 1
+        if trade_data.get('bos_detected'):
+            self.smc_stats['bos_signals'] += 1
+        if trade_data.get('displacement_detected'):
+            self.smc_stats['displacement_signals'] += 1
+        if trade_data.get('confidence', 0) >= 5:
+            self.smc_stats['confluence_trades'] += 1
 
         # Update peak and drawdown
         if trade_data['balance'] > self.peak_balance:
@@ -121,6 +148,10 @@ class PerformanceTracker:
         else:
             sharpe = 0
 
+        # Calculate SMC win rate
+        smc_trades = [t for t in self.trades if t['confidence'] >= 5]
+        smc_wins = [t for t in smc_trades if t['profit'] > 0]
+
         return {
             'total_trades': len(self.trades),
             'winning_trades': len(winners),
@@ -138,7 +169,10 @@ class PerformanceTracker:
             'max_drawdown': self.max_drawdown,
             'sharpe_ratio': sharpe,
             'final_balance': self.trades[-1]['balance'] if self.trades else self.initial_balance,
-            'total_return': ((self.trades[-1]['balance'] - self.initial_balance) / self.initial_balance * 100) if self.trades and self.initial_balance else 0
+            'total_return': ((self.trades[-1]['balance'] - self.initial_balance) / self.initial_balance * 100) if self.trades and self.initial_balance else 0,
+            'smc_stats': self.smc_stats,
+            'smc_trades': len(smc_trades),
+            'smc_win_rate': (len(smc_wins) / len(smc_trades) * 100) if smc_trades else 0
         }
 
     def print_summary(self):
@@ -148,7 +182,7 @@ class PerformanceTracker:
             return
 
         print("\n" + "═"*70)
-        print("                    PERFORMANCE SUMMARY")
+        print("              HYBRID SMC BOT - PERFORMANCE SUMMARY")
         print("═"*70)
         print(f"Period: {self.start_time.strftime('%Y-%m-%d %H:%M')} - {datetime.now().strftime('%Y-%m-%d %H:%M')}")
         print(f"Initial Balance: ${self.initial_balance:,.2f}")
@@ -161,24 +195,25 @@ class PerformanceTracker:
         print("─"*70)
         print(f"Total Profit:    ${stats['total_profit']:+,.2f}")
         print(f"Total Pips:      {stats['total_pips']:+.1f}")
-        print(f"Avg Profit:      ${stats['avg_profit']:+,.2f}")
-        print(f"Avg Pips/Trade:  {stats['avg_pips']:+.1f}")
-        print(f"Max Profit:      ${stats['max_profit']:+,.2f}")
-        print(f"Max Loss:        ${stats['max_loss']:+,.2f}")
+        print("─"*70)
+        print("SMC STATISTICS:")
+        print(f"  Liquidity Sweeps:     {stats['smc_stats']['liquidity_sweeps']}")
+        print(f"  Break of Structure:   {stats['smc_stats']['bos_signals']}")
+        print(f"  Displacement:         {stats['smc_stats']['displacement_signals']}")
+        print(f"  High Confluence Trades: {stats['smc_stats']['confluence_trades']}")
+        print(f"  SMC Trade Win Rate:   {stats['smc_win_rate']:.1f}%")
         print("─"*70)
         print(f"Max Drawdown:    {stats['max_drawdown']:.2f}%")
-        print(f"Max Win Streak:  {stats['max_consecutive_wins']}")
-        print(f"Max Loss Streak: {stats['max_consecutive_losses']}")
         print(f"Sharpe Ratio:    {stats['sharpe_ratio']:.2f}")
         print("═"*70)
 
 
 # ═══════════════════════════════════════════════════════════════════
-#  CONFIGURATION
+#  CONFIGURATION (Enhanced with SMC Settings)
 # ═══════════════════════════════════════════════════════════════════
 
 class BotConfig:
-    """Configuration management"""
+    """Configuration management with SMC settings"""
 
     def __init__(self, config_file='bot_config.json'):
         self.config_file = config_file
@@ -196,9 +231,9 @@ class BotConfig:
     def default_config(self):
         return {
             'mt5': {
-                'login': 12345678,
-                'password': 'your_password',
-                'server': 'YourBroker-Demo'
+                'login': 33298472,
+                'password': 'zfkFS98##',
+                'server': 'FundedNext-Server3'
             },
             'symbols': {
                 'metals': ['XAUUSD', 'XAGUSD'],
@@ -221,6 +256,18 @@ class BotConfig:
                 'atr_sl_mult': 1.5,
                 'atr_tp_mult': 3.0
             },
+            'smc_settings': {
+                'enabled': True,
+                'swing_lookback': 20,
+                'sweep_sensitivity': 0.001,  # 0.1% for sweep detection
+                'min_confidence': 5,  # Minimum confidence score to enter (max 10)
+                'require_displacement': True,
+                'require_bos': True,
+                'london_session': [8, 17],
+                'ny_session': [13, 22],
+                'asia_session': [0, 9],
+                'use_session_filter': True
+            },
             'trailing_stop': {
                 'enabled': True,
                 'activation_pips': 20,
@@ -228,7 +275,8 @@ class BotConfig:
             },
             'risk': {
                 'currency_risk_percent': 1.0,
-                'metal_crypto_risk_percent': 0.5
+                'metal_crypto_risk_percent': 0.5,
+                'confidence_scaling': True  # Scale position size by confidence
             },
             'general': {
                 'timeframe': 'H1',
@@ -253,13 +301,13 @@ class BotConfig:
 
 
 # ═══════════════════════════════════════════════════════════════════
-#  MAIN TRADING BOT
+#  HYBRID SMC + INDICATOR TRADING BOT
 # ═══════════════════════════════════════════════════════════════════
 
-class UltimateTradingBot:
+class HybridSMCBot:
     """
-    Ultimate Multi-Symbol Trading Bot
-    Combines: SMA + ADX + ATR + Trailing Stops + Performance Tracking
+    Ultimate Hybrid SMC + Indicator Trading Bot
+    Combines: Market Structure + Liquidity Sweeps + BOS + ADX/ATR
     """
 
     def __init__(self, config=None):
@@ -285,12 +333,25 @@ class UltimateTradingBot:
         self.atr_sl_mult = self.config.get('strategy.atr_sl_mult', 1.5)
         self.atr_tp_mult = self.config.get('strategy.atr_tp_mult', 3.0)
 
+        # SMC Settings
+        self.smc_enabled = self.config.get('smc_settings.enabled', True)
+        self.swing_lookback = self.config.get('smc_settings.swing_lookback', 20)
+        self.sweep_sensitivity = self.config.get('smc_settings.sweep_sensitivity', 0.001)
+        self.min_confidence = self.config.get('smc_settings.min_confidence', 5)
+        self.require_displacement = self.config.get('smc_settings.require_displacement', True)
+        self.require_bos = self.config.get('smc_settings.require_bos', True)
+        self.london_session = self.config.get('smc_settings.london_session', [8, 17])
+        self.ny_session = self.config.get('smc_settings.ny_session', [13, 22])
+        self.asia_session = self.config.get('smc_settings.asia_session', [0, 9])
+        self.use_session_filter = self.config.get('smc_settings.use_session_filter', True)
+
         self.trailing_enabled = self.config.get('trailing_stop.enabled', True)
         self.trailing_activation = self.config.get('trailing_stop.activation_pips', 20)
         self.trailing_distance = self.config.get('trailing_stop.trail_distance', 15)
 
         self.currency_risk = self.config.get('risk.currency_risk_percent', 1.0)
         self.metal_risk = self.config.get('risk.metal_crypto_risk_percent', 0.5)
+        self.confidence_scaling = self.config.get('risk.confidence_scaling', True)
 
         timeframe_map = {
             'M1': mt5.TIMEFRAME_M1, 'M5': mt5.TIMEFRAME_M5,
@@ -319,7 +380,9 @@ class UltimateTradingBot:
                 'entry_price': None,
                 'entry_time': None,
                 'current_sl': None,
-                'trade_data': None
+                'trade_data': None,
+                'last_structure': None,
+                'last_confidence': 0
             }
 
     # ─────────────────────────────────────────────────────────────
@@ -328,9 +391,14 @@ class UltimateTradingBot:
 
     def connect(self, login, password, server):
         """Connect to MT5"""
+        mt5.shutdown()
+        time.sleep(2)
+
         if not mt5.initialize():
             logger.error(f"MT5 init failed: {mt5.last_error()}")
             return False
+
+        time.sleep(2)
 
         if not mt5.login(login, password=password, server=server):
             logger.error(f"Login failed: {mt5.last_error()}")
@@ -360,35 +428,176 @@ class UltimateTradingBot:
         return 'unknown'
 
     # ─────────────────────────────────────────────────────────────
-    #  Lot Sizing
+    #  SMC Core Methods
     # ─────────────────────────────────────────────────────────────
 
-    def calculate_lot_size(self, symbol, balance):
-        """Dynamic lot sizing based on balance"""
-        sym_type = self.get_symbol_type(symbol)
+    def detect_swing_points(self, df):
+        """
+        Detect swing highs and lows mechanically
+        Returns: list of (index, price) for swings
+        """
+        highs = df['high'].values
+        lows = df['low'].values
+        
+        swing_highs = []
+        swing_lows = []
+        
+        for i in range(2, len(highs)-2):
+            # Swing high: higher than 2 candles on each side
+            if (highs[i] > highs[i-1] and highs[i] > highs[i-2] and 
+                highs[i] > highs[i+1] and highs[i] > highs[i+2]):
+                swing_highs.append((i, highs[i]))
+            
+            # Swing low: lower than 2 candles on each side
+            if (lows[i] < lows[i-1] and lows[i] < lows[i-2] and 
+                lows[i] < lows[i+1] and lows[i] < lows[i+2]):
+                swing_lows.append((i, lows[i]))
+        
+        return swing_highs, swing_lows
 
-        if sym_type == 'currency':
-            if balance < self.currency_threshold:
-                return self.base_lot
-            extra = int((balance - self.currency_threshold) / 20)
-            lot = self.base_lot + (extra * self.currency_lot_step)
-        elif sym_type in ['metal', 'crypto']:
-            if balance < self.metal_threshold:
-                return self.base_lot
-            extra = int((balance - self.metal_threshold) / 50)
-            lot = self.base_lot + (extra * self.metal_lot_step)
-        else:
-            lot = self.base_lot
+    def detect_market_structure(self, df):
+        """
+        Detect market structure:
+        - Higher Highs / Higher Lows = UPTREND
+        - Lower Highs / Lower Lows = DOWNTREND
+        - Equal highs/lows = RANGE
+        """
+        swing_highs, swing_lows = self.detect_swing_points(df)
+        
+        # Get last 3 swings for structure analysis
+        last_3_highs = swing_highs[-3:] if len(swing_highs) >= 3 else swing_highs
+        last_3_lows = swing_lows[-3:] if len(swing_lows) >= 3 else swing_lows
+        
+        structure = "RANGE"
+        last_swing_high = None
+        last_swing_low = None
+        
+        if len(last_3_highs) >= 2 and len(last_3_lows) >= 2:
+            # Check for uptrend (higher highs AND higher lows)
+            if (last_3_highs[-1][1] > last_3_highs[-2][1] and 
+                last_3_lows[-1][1] > last_3_lows[-2][1]):
+                structure = "UPTREND"
+                last_swing_high = last_3_highs[-1][1]
+                last_swing_low = last_3_lows[-1][1]
+            
+            # Check for downtrend (lower highs AND lower lows)
+            elif (last_3_highs[-1][1] < last_3_highs[-2][1] and 
+                  last_3_lows[-1][1] < last_3_lows[-2][1]):
+                structure = "DOWNTREND"
+                last_swing_high = last_3_highs[-1][1]
+                last_swing_low = last_3_lows[-1][1]
+        
+        return structure, last_swing_high, last_swing_low
 
-        info = mt5.symbol_info(symbol)
-        if info:
-            lot = max(info.volume_min, min(lot, info.volume_max))
-            lot = round(lot / info.volume_step) * info.volume_step
+    def detect_liquidity_sweep(self, df, structure):
+        """
+        Detect liquidity sweeps:
+        - Uptrend: price sweeps below recent low then closes back above
+        - Downtrend: price sweeps above recent high then closes back below
+        """
+        current_price = df['close'].iloc[-1]
+        current_low = df['low'].iloc[-1]
+        current_high = df['high'].iloc[-1]
+        
+        # Look for liquidity levels in last 20 candles
+        lookback = min(20, len(df)-5)
+        recent_lows = df['low'].iloc[-lookback:-1].min()
+        recent_highs = df['high'].iloc[-lookback:-1].max()
+        
+        sweep_type = "NO_SWEEP"
+        sweep_level = None
+        
+        if structure == "UPTREND":
+            # Sweep below recent low
+            if current_low < recent_lows * (1 - self.sweep_sensitivity):
+                # Check if we're closing back above
+                if current_price > recent_lows:
+                    sweep_type = "BULLISH_SWEEP"
+                    sweep_level = recent_lows
+                    logger.debug(f"Bullish sweep detected: low={current_low:.5f} < {recent_lows:.5f}")
+        
+        elif structure == "DOWNTREND":
+            # Sweep above recent high
+            if current_high > recent_highs * (1 + self.sweep_sensitivity):
+                # Check if we're closing back below
+                if current_price < recent_highs:
+                    sweep_type = "BEARISH_SWEEP"
+                    sweep_level = recent_highs
+                    logger.debug(f"Bearish sweep detected: high={current_high:.5f} > {recent_highs:.5f}")
+        
+        return sweep_type, sweep_level
 
-        return lot
+    def detect_break_of_structure(self, df, structure, last_swing_high, last_swing_low):
+        """
+        Detect Break of Structure (BOS):
+        - Uptrend BOS: price breaks above last swing high
+        - Downtrend BOS: price breaks below last swing low
+        """
+        current_high = df['high'].iloc[-1]
+        current_low = df['low'].iloc[-1]
+        
+        bos_type = "NO_BOS"
+        bos_level = None
+        
+        if structure == "UPTREND" and last_swing_high:
+            if current_high > last_swing_high:
+                bos_type = "BOS_UP"
+                bos_level = last_swing_high
+                logger.debug(f"Bullish BOS: {current_high:.5f} > {last_swing_high:.5f}")
+        
+        elif structure == "DOWNTREND" and last_swing_low:
+            if current_low < last_swing_low:
+                bos_type = "BOS_DOWN"
+                bos_level = last_swing_low
+                logger.debug(f"Bearish BOS: {current_low:.5f} < {last_swing_low:.5f}")
+        
+        return bos_type, bos_level
+
+    def detect_displacement(self, df):
+        """
+        Detect displacement (strong momentum):
+        - Large body candles
+        - Closing near highs/lows
+        - Above average range
+        """
+        if len(df) < 20:
+            return "NO_DISPLACEMENT"
+        
+        # Calculate average candle size
+        avg_range = (df['high'] - df['low']).rolling(window=20).mean().iloc[-1]
+        current_range = df['high'].iloc[-1] - df['low'].iloc[-1]
+        current_body = abs(df['close'].iloc[-1] - df['open'].iloc[-1])
+        current_close = df['close'].iloc[-1]
+        current_open = df['open'].iloc[-1]
+        
+        # Bullish displacement
+        if (current_body > avg_range * 0.7 and  # Large body
+            current_close > current_open and     # Bullish candle
+            current_range > avg_range * 1.2):    # Above avg range
+            return "BULLISH_DISPLACEMENT"
+        
+        # Bearish displacement
+        elif (current_body > avg_range * 0.7 and
+              current_close < current_open and
+              current_range > avg_range * 1.2):
+            return "BEARISH_DISPLACEMENT"
+        
+        return "NO_DISPLACEMENT"
+
+    def check_session(self):
+        """Check if current time is in active trading session"""
+        if not self.use_session_filter:
+            return True
+        
+        current_hour = datetime.now().hour
+        
+        in_london = self.london_session[0] <= current_hour <= self.london_session[1]
+        in_ny = self.ny_session[0] <= current_hour <= self.ny_session[1]
+        
+        return in_london or in_ny
 
     # ─────────────────────────────────────────────────────────────
-    #  Indicators
+    #  Indicator Methods
     # ─────────────────────────────────────────────────────────────
 
     def get_historical_data(self, symbol, bars=300):
@@ -426,65 +635,175 @@ class UltimateTradingBot:
         tr = pd.concat([high - low, (high - close.shift(1)).abs(), (low - close.shift(1)).abs()], axis=1).max(axis=1)
         return tr.rolling(window=period).mean().iloc[-1]
 
-    def analyze_symbol(self, symbol):
-        """Complete market analysis"""
-        df = self.get_historical_data(symbol)
-        if df is None or len(df) < max(self.long_ma, self.adx_period) + 10:
+    # ─────────────────────────────────────────────────────────────
+    #  Hybrid Analysis
+    # ─────────────────────────────────────────────────────────────
+
+    def analyze_symbol_hybrid(self, symbol):
+        """
+        Complete hybrid SMC + indicator analysis
+        Returns: dict with signal and confidence
+        """
+        df = self.get_historical_data(symbol, bars=200)
+        if df is None or len(df) < max(self.long_ma, self.adx_period) + 50:
             return None
 
-        # SMAs
+        # 1. Market Structure (SMC)
+        structure, last_swing_high, last_swing_low = self.detect_market_structure(df)
+        
+        # 2. Liquidity Sweep (SMC)
+        sweep_type, sweep_level = self.detect_liquidity_sweep(df, structure)
+        
+        # 3. Break of Structure (SMC)
+        bos_type, bos_level = self.detect_break_of_structure(df, structure, last_swing_high, last_swing_low)
+        
+        # 4. Displacement (SMC)
+        displacement = self.detect_displacement(df)
+        
+        # 5. ADX (Indicator Filter)
+        adx, plus_di, minus_di = self.calculate_adx(df, self.adx_period)
+        strong_trend = adx > self.adx_min
+        
+        # 6. SMAs (Secondary Confirmation)
         df['sma_short'] = df['close'].rolling(window=self.short_ma).mean()
         df['sma_long'] = df['close'].rolling(window=self.long_ma).mean()
-
-        # ADX
-        adx, plus_di, minus_di = self.calculate_adx(df, self.adx_period)
-
-        # ATR
+        sma_bullish = df['sma_short'].iloc[-1] > df['sma_long'].iloc[-1]
+        sma_bearish = df['sma_short'].iloc[-1] < df['sma_long'].iloc[-1]
+        
+        # 7. ATR (For Stop Loss)
         atr = self.calculate_atr(df, self.atr_period)
-
-        # Values
-        curr_short = df['sma_short'].iloc[-1]
-        curr_long = df['sma_long'].iloc[-1]
-        prev_short = df['sma_short'].iloc[-2]
-        prev_long = df['sma_long'].iloc[-2]
-        curr_price = df['close'].iloc[-1]
-
-        # Trend & Signals
-        trend = "UPTREND" if curr_short > curr_long else "DOWNTREND"
-        golden_cross = prev_short <= prev_long and curr_short > curr_long
-        death_cross = prev_short >= prev_long and curr_short < curr_long
-
-        strong_trend = adx > self.adx_min
+        
+        # 8. Session Filter
+        good_session = self.check_session()
+        
+        # Calculate confidence score (0-10)
+        confidence = 0
         signal = "HOLD"
-
-        if golden_cross and strong_trend and plus_di > minus_di:
-            signal = "BUY"
-        elif death_cross and strong_trend and minus_di > plus_di:
-            signal = "SELL"
-
-        # Dynamic SL/TP based on ATR
+        
+        # Bullish confluence
+        if structure == "UPTREND":
+            confidence += 2
+            if sweep_type == "BULLISH_SWEEP":
+                confidence += 2
+            if bos_type == "BOS_UP":
+                confidence += 2
+            if displacement == "BULLISH_DISPLACEMENT":
+                confidence += 3
+            if strong_trend and plus_di > minus_di:
+                confidence += 2
+            if sma_bullish:
+                confidence += 1
+            if good_session:
+                confidence += 1
+            
+            # Check minimum requirements
+            meets_requirements = True
+            if self.require_bos and bos_type != "BOS_UP":
+                meets_requirements = False
+            if self.require_displacement and displacement != "BULLISH_DISPLACEMENT":
+                meets_requirements = False
+            
+            if meets_requirements and confidence >= self.min_confidence:
+                signal = "BUY"
+        
+        # Bearish confluence
+        elif structure == "DOWNTREND":
+            confidence += 2
+            if sweep_type == "BEARISH_SWEEP":
+                confidence += 2
+            if bos_type == "BOS_DOWN":
+                confidence += 2
+            if displacement == "BEARISH_DISPLACEMENT":
+                confidence += 3
+            if strong_trend and minus_di > plus_di:
+                confidence += 2
+            if sma_bearish:
+                confidence += 1
+            if good_session:
+                confidence += 1
+            
+            # Check minimum requirements
+            meets_requirements = True
+            if self.require_bos and bos_type != "BOS_DOWN":
+                meets_requirements = False
+            if self.require_displacement and displacement != "BEARISH_DISPLACEMENT":
+                meets_requirements = False
+            
+            if meets_requirements and confidence >= self.min_confidence:
+                signal = "SELL"
+        
+        # Calculate ATR in pips for logging
         pip = 0.01 if 'JPY' in symbol else 0.0001
         atr_pips = atr / pip
-        sl_dist = atr * self.atr_sl_mult
-        tp_dist = atr * self.atr_tp_mult
-
+        
         return {
             'signal': signal,
-            'trend': trend,
-            'price': curr_price,
-            'sma_50': curr_short,
-            'sma_200': curr_long,
+            'confidence': confidence,
+            'structure': structure,
+            'sweep': sweep_type,
+            'bos': bos_type,
+            'displacement': displacement,
             'adx': adx,
-            'adx_strong': strong_trend,
+            'strong_trend': strong_trend,
             'plus_di': plus_di,
             'minus_di': minus_di,
+            'sma_bullish': sma_bullish,
+            'sma_bearish': sma_bearish,
             'atr': atr,
             'atr_pips': atr_pips,
-            'sl_distance': sl_dist,
-            'tp_distance': tp_dist,
-            'golden_cross': golden_cross,
-            'death_cross': death_cross
+            'good_session': good_session,
+            'price': df['close'].iloc[-1],
+            'last_swing_high': last_swing_high,
+            'last_swing_low': last_swing_low,
+            'sweep_level': sweep_level,
+            'bos_level': bos_level
         }
+
+    # ─────────────────────────────────────────────────────────────
+    #  Risk & Position Sizing
+    # ─────────────────────────────────────────────────────────────
+
+    def calculate_risk_percent(self, symbol, confidence):
+        """Calculate risk percentage based on symbol type and confidence"""
+        base_risk = self.metal_risk if self.get_symbol_type(symbol) in ['metal', 'crypto'] else self.currency_risk
+        
+        if self.confidence_scaling:
+            # Scale risk with confidence (0.5x to 1.0x)
+            confidence_factor = min(1.0, confidence / 10)
+            return base_risk * confidence_factor
+        else:
+            return base_risk
+
+    def calculate_position_size(self, symbol, balance, confidence, stop_loss_pips):
+        """Calculate position size with confidence scaling"""
+        risk_percent = self.calculate_risk_percent(symbol, confidence)
+        risk_amount = balance * (risk_percent / 100)
+        
+        symbol_info = mt5.symbol_info(symbol)
+        if not symbol_info:
+            return self.base_lot
+        
+        # Calculate pip value
+        if self.get_symbol_type(symbol) == 'currency':
+            pip_value = symbol_info.trade_contract_size * (0.0001 if 'JPY' not in symbol else 0.01)
+        else:
+            pip_value = symbol_info.trade_contract_size * symbol_info.trade_tick_value
+        
+        risk_per_pip = pip_value * stop_loss_pips
+        if risk_per_pip == 0:
+            return self.base_lot
+        
+        calculated_lots = risk_amount / risk_per_pip
+        
+        # Round to valid lot size
+        min_lot = symbol_info.volume_min
+        max_lot = symbol_info.volume_max
+        lot_step = symbol_info.volume_step
+        
+        calculated_lots = max(min_lot, min(max_lot, calculated_lots))
+        calculated_lots = round(calculated_lots / lot_step) * lot_step
+        
+        return calculated_lots
 
     # ─────────────────────────────────────────────────────────────
     #  Trading Operations
@@ -514,7 +833,7 @@ class UltimateTradingBot:
         digits = info.digits if info else 5
         return pip, digits
 
-    def open_position(self, symbol, order_type, lot_size, sl_price, tp_price):
+    def open_position(self, symbol, order_type, lot_size, sl_price, tp_price, confidence):
         """Open position with SL/TP"""
         info = mt5.symbol_info(symbol)
         if not info:
@@ -533,7 +852,7 @@ class UltimateTradingBot:
             "tp": round(tp_price, self.get_pip_info(symbol)[1]),
             "deviation": 10,
             "magic": 234000,
-            "comment": "Ultimate Bot",
+            "comment": f"SMC_{confidence}",
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": mt5.ORDER_FILLING_IOC,
         }
@@ -544,13 +863,13 @@ class UltimateTradingBot:
             return False
 
         sym_type = self.get_symbol_type(symbol)
-        logger.info(f"  OPENED: [{sym_type.upper()}] {symbol} | {order_type.upper()} | Price: {price}")
-        logger.info(f"  Lots: {lot_size:.2f} | SL: {sl_price} | TP: {tp_price}")
+        logger.info(f"  🟢 OPENED: [{sym_type.upper()}] {symbol} | {order_type.upper()} | Conf:{confidence}")
+        logger.info(f"     Price: {price:.5f} | Lots: {lot_size:.2f} | SL: {sl_price:.5f} | TP: {tp_price:.5f}")
 
         return True
 
-    def close_position(self, symbol, position):
-        """Close position and record trade"""
+    def close_position(self, symbol, position, analysis=None):
+        """Close position and record trade with SMC metrics"""
         info = mt5.symbol_info(symbol)
         if not info:
             return False
@@ -590,6 +909,18 @@ class UltimateTradingBot:
         entry_time = self.symbol_data[symbol]['entry_time']
         duration = (datetime.now() - entry_time).total_seconds() / 60 if entry_time else 0
 
+        # Get SMC metrics from analysis if available
+        sweep_detected = False
+        bos_detected = False
+        displacement_detected = False
+        confidence = 0
+        
+        if analysis:
+            sweep_detected = analysis.get('sweep', 'NO_SWEEP') != 'NO_SWEEP'
+            bos_detected = analysis.get('bos', 'NO_BOS') != 'NO_BOS'
+            displacement_detected = analysis.get('displacement', 'NO_DISPLACEMENT') != 'NO_DISPLACEMENT'
+            confidence = analysis.get('confidence', 0)
+
         # Record trade
         account = mt5.account_info()
         self.performance.add_trade({
@@ -600,10 +931,15 @@ class UltimateTradingBot:
             'profit': profit,
             'pips': pips,
             'balance': account.balance if account else 0,
-            'duration_minutes': duration
+            'duration_minutes': duration,
+            'confidence': confidence,
+            'structure': analysis.get('structure', 'UNKNOWN') if analysis else 'UNKNOWN',
+            'sweep_detected': sweep_detected,
+            'bos_detected': bos_detected,
+            'displacement_detected': displacement_detected
         })
 
-        logger.info(f"  CLOSED: {symbol} @ {price} | Pips: {pips:+.1f} | Profit: ${profit:+.2f}")
+        logger.info(f"  🔴 CLOSED: {symbol} @ {price:.5f} | Pips: {pips:+.1f} | Profit: ${profit:+.2f}")
         self.symbol_data[symbol]['trade_data'] = None
 
         return True
@@ -626,14 +962,14 @@ class UltimateTradingBot:
 
             if profit_pips >= self.trailing_activation and new_sl > (position['sl'] or 0):
                 self.modify_sl(symbol, position['ticket'], new_sl)
-                logger.info(f"  TRAILING: {symbol} SL -> {new_sl:.5f}")
+                logger.info(f"  📈 TRAILING: {symbol} SL -> {new_sl:.5f}")
         else:
             profit_pips = (position['open_price'] - curr_price) / pip
             new_sl = curr_price + (self.trailing_distance * pip)
 
             if profit_pips >= self.trailing_activation and new_sl < (position['sl'] or float('inf')):
                 self.modify_sl(symbol, position['ticket'], new_sl)
-                logger.info(f"  TRAILING: {symbol} SL -> {new_sl:.5f}")
+                logger.info(f"  📉 TRAILING: {symbol} SL -> {new_sl:.5f}")
 
     def modify_sl(self, symbol, ticket, new_sl):
         """Modify stop loss"""
@@ -651,12 +987,10 @@ class UltimateTradingBot:
     # ─────────────────────────────────────────────────────────────
 
     def process_symbol(self, symbol):
-        """Process one symbol"""
+        """Process one symbol with hybrid SMC logic"""
         with self.lock:
             balance = mt5.account_info().balance if mt5.account_info() else 0
-            lot_size = self.calculate_lot_size(symbol, balance)
-            self.symbol_data[symbol]['lot_size'] = lot_size
-
+            
             # Check position
             position = self.check_position(symbol)
             in_pos = position is not None
@@ -669,110 +1003,162 @@ class UltimateTradingBot:
             if in_pos and self.trailing_enabled:
                 self.update_trailing_stop(symbol, position)
 
-            # Analyze
-            analysis = self.analyze_symbol(symbol)
+            # Analyze with hybrid SMC
+            analysis = self.analyze_symbol_hybrid(symbol)
             if analysis is None:
                 return
 
+            # Store analysis
+            self.symbol_data[symbol]['last_structure'] = analysis['structure']
+            self.symbol_data[symbol]['last_confidence'] = analysis['confidence']
+
             sym_type = self.get_symbol_type(symbol)
-            emoji = {'metal': '[GOLD/SILVER]', 'currency': '[FOREX]', 'crypto': '[CRYPTO]'}.get(sym_type, '[OTHER]')
+            emoji_map = {
+                'metal': '🏗️',  # Gold/Silver
+                'currency': '💱',  # Forex
+                'crypto': '₿'   # Crypto
+            }
+            emoji = emoji_map.get(sym_type, '📊')
 
-            # Log signals
-            if analysis['signal'] != 'HOLD':
-                logger.info(f"{emoji} {symbol}: SIGNAL={analysis['signal']} | Price: {analysis['price']}")
-                logger.info(f"  SMA: {analysis['sma_50']:.5f}/{analysis['sma_200']:.5f} | Trend: {analysis['trend']}")
-                logger.info(f"  ADX: {analysis['adx']:.1f} | +DI: {analysis['plus_di']:.1f} | -DI: {analysis['minus_di']:.1f}")
-                logger.info(f"  ATR: {analysis['atr_pips']:.1f}pips | SL: {analysis['sl_distance']:.5f} | TP: {analysis['tp_distance']:.5f}")
-                logger.info(f"  Lots: {lot_size:.2f} | Balance: ${balance:.2f}")
+            # Log significant signals
+            if analysis['signal'] != 'HOLD' or analysis['confidence'] >= 3:
+                logger.info(f"\n{emoji} {symbol} ANALYSIS:")
+                logger.info(f"  Structure: {analysis['structure']} | Sweep: {analysis['sweep']} | BOS: {analysis['bos']}")
+                logger.info(f"  Displacement: {analysis['displacement']} | ADX: {analysis['adx']:.1f}")
+                logger.info(f"  Confidence: {analysis['confidence']}/10 | Signal: {analysis['signal']}")
+                logger.info(f"  Price: {analysis['price']:.5f} | ATR: {analysis['atr_pips']:.1f}pips")
 
-            # Execute trades
+            # Calculate dynamic SL/TP based on ATR
+            atr = analysis['atr']
+            sl_distance = atr * self.atr_sl_mult
+            tp_distance = atr * self.atr_tp_mult
+
+            # Calculate position size with confidence scaling
+            lot_size = self.calculate_position_size(
+                symbol, 
+                balance, 
+                analysis['confidence'],
+                sl_distance / (0.01 if 'JPY' in symbol else 0.0001)
+            )
+
+            # Execute trades based on signal
             if analysis['signal'] == 'BUY' and not in_pos:
-                sl = analysis['price'] - analysis['sl_distance']
-                tp = analysis['price'] + analysis['tp_distance']
-                if self.open_position(symbol, 'buy', lot_size, sl, tp):
+                sl = analysis['price'] - sl_distance
+                tp = analysis['price'] + tp_distance
+                if self.open_position(symbol, 'buy', lot_size, sl, tp, analysis['confidence']):
                     self.symbol_data[symbol]['in_position'] = True
                     self.symbol_data[symbol]['position_type'] = 'buy'
                     self.symbol_data[symbol]['entry_price'] = analysis['price']
                     self.symbol_data[symbol]['entry_time'] = datetime.now()
 
             elif analysis['signal'] == 'SELL' and not in_pos:
-                sl = analysis['price'] + analysis['sl_distance']
-                tp = analysis['price'] - analysis['tp_distance']
-                if self.open_position(symbol, 'sell', lot_size, sl, tp):
+                sl = analysis['price'] + sl_distance
+                tp = analysis['price'] - tp_distance
+                if self.open_position(symbol, 'sell', lot_size, sl, tp, analysis['confidence']):
                     self.symbol_data[symbol]['in_position'] = True
                     self.symbol_data[symbol]['position_type'] = 'sell'
                     self.symbol_data[symbol]['entry_price'] = analysis['price']
                     self.symbol_data[symbol]['entry_time'] = datetime.now()
 
+            # Reversal logic
             elif analysis['signal'] == 'BUY' and pos_type == 'sell' and position:
-                self.close_position(symbol, position)
-                sl = analysis['price'] - analysis['sl_distance']
-                tp = analysis['price'] + analysis['tp_distance']
-                if self.open_position(symbol, 'buy', lot_size, sl, tp):
+                logger.info(f"  🔄 Reversing {symbol} from SELL to BUY")
+                self.close_position(symbol, position, analysis)
+                sl = analysis['price'] - sl_distance
+                tp = analysis['price'] + tp_distance
+                if self.open_position(symbol, 'buy', lot_size, sl, tp, analysis['confidence']):
                     self.symbol_data[symbol]['position_type'] = 'buy'
                     self.symbol_data[symbol]['entry_price'] = analysis['price']
                     self.symbol_data[symbol]['entry_time'] = datetime.now()
 
             elif analysis['signal'] == 'SELL' and pos_type == 'buy' and position:
-                self.close_position(symbol, position)
-                sl = analysis['price'] + analysis['sl_distance']
-                tp = analysis['price'] - analysis['tp_distance']
-                if self.open_position(symbol, 'sell', lot_size, sl, tp):
+                logger.info(f"  🔄 Reversing {symbol} from BUY to SELL")
+                self.close_position(symbol, position, analysis)
+                sl = analysis['price'] + sl_distance
+                tp = analysis['price'] - tp_distance
+                if self.open_position(symbol, 'sell', lot_size, sl, tp, analysis['confidence']):
                     self.symbol_data[symbol]['position_type'] = 'sell'
                     self.symbol_data[symbol]['entry_price'] = analysis['price']
                     self.symbol_data[symbol]['entry_time'] = datetime.now()
 
     def print_status(self):
-        """Print bot status"""
+        """Print bot status with SMC info"""
         balance = mt5.account_info().balance if mt5.account_info() else 0
 
-        logger.info("\n" + "═"*70)
-        logger.info("                           STATUS")
-        logger.info("═"*70)
-        logger.info(f"Balance: ${balance:,.2f} | Symbols: {len(self.symbols)}")
-        logger.info("─"*70)
+        logger.info("\n" + "═"*80)
+        logger.info("                           HYBRID SMC BOT STATUS")
+        logger.info("═"*80)
+        logger.info(f"Balance: ${balance:,.2f} | Symbols: {len(self.symbols)} | Time: {datetime.now().strftime('%H:%M:%S')}")
+        logger.info("─"*80)
+        logger.info(f"{'Symbol':<10} {'Type':<8} {'Status':<8} {'Structure':<10} {'Conf':<5} {'Lots':<6} {'Profit':<10}")
+        logger.info("─"*80)
 
+        total_profit = 0
         for symbol in self.symbols:
             data = self.symbol_data[symbol]
+            position = self.check_position(symbol)
+            
             sym_type = self.get_symbol_type(symbol)
             status = "OPEN" if data['in_position'] else "CLOSED"
-            emoji = {'metal': '[GOLD/SILVER]', 'currency': '[FOREX]', 'crypto': '[CRYPTO]'}.get(sym_type, '[OTHER]')
-            logger.info(f"  {emoji} {symbol}: {status} | Lots: {data['lot_size']:.2f}")
+            structure = data.get('last_structure', '---')
+            confidence = data.get('last_confidence', 0)
+            profit = position['profit'] if position else 0
+            total_profit += profit if position else 0
+            
+            emoji_map = {
+                'metal': '🏗️',
+                'currency': '💱',
+                'crypto': '₿'
+            }
+            emoji = emoji_map.get(sym_type, '📊')
+            
+            logger.info(f"{emoji} {symbol:<8} {sym_type:<8} {status:<8} {structure:<10} {confidence}/10  {data['lot_size']:<6.2f} ${profit:>+8.2f}")
 
-        logger.info("═"*70)
+        logger.info("─"*80)
+        logger.info(f"{'TOTAL OPEN P&L:':<48} ${total_profit:>+8.2f}")
+        logger.info("═"*80)
 
     def run(self):
         """Main trading loop"""
         self.running = True
 
-        logger.info("\n" + "═"*70)
-        logger.info("        ULTIMATE MULTI-SYMBOL TRADING BOT")
-        logger.info("═"*70)
+        logger.info("\n" + "═"*80)
+        logger.info("        ULTIMATE HYBRID SMC + INDICATOR TRADING BOT")
+        logger.info("═"*80)
         logger.info(f"Symbols: {', '.join(self.symbols)}")
-        logger.info(f"Strategy: SMA({self.short_ma}/{self.long_ma}) + ADX>{self.adx_min} + ATR SL/TP")
-        logger.info(f"Trailing Stop: {'ON' if self.trailing_enabled else 'OFF'} (activate: {self.trailing_activation}pips, trail: {self.trailing_distance}pips)")
+        logger.info(f"Strategy: SMC Structure + Liquidity Sweeps + BOS + ADX/ATR")
+        logger.info(f"SMC Settings:")
+        logger.info(f"  • Min Confidence: {self.min_confidence}/10")
+        logger.info(f"  • Require BOS: {self.require_bos}")
+        logger.info(f"  • Require Displacement: {self.require_displacement}")
+        logger.info(f"  • Session Filter: {'ON' if self.use_session_filter else 'OFF'}")
+        logger.info(f"ADX Filter: >{self.adx_min}")
+        logger.info(f"ATR Multipliers: SL={self.atr_sl_mult}x, TP={self.atr_tp_mult}x")
+        logger.info(f"Trailing Stop: {'ON' if self.trailing_enabled else 'OFF'}")
         logger.info(f"Check Interval: {self.check_interval}s")
-        logger.info("═"*70)
+        logger.info("═"*80)
         logger.info("Press Ctrl+C to stop\n")
 
         cycle = 0
         try:
             while self.running:
                 cycle += 1
-                logger.info(f"\n--- Cycle #{cycle} ---")
+                logger.info(f"\n{'─'*50} Cycle #{cycle} {'─'*50}")
 
                 for symbol in self.symbols:
                     self.process_symbol(symbol)
 
-                if cycle % 10 == 0:
+                if cycle % 5 == 0:  # Print status every 5 cycles
                     self.print_status()
 
                 time.sleep(self.check_interval)
 
         except KeyboardInterrupt:
-            logger.info("\nBot stopped by user")
+            logger.info("\n🛑 Bot stopped by user")
         except Exception as e:
             logger.error(f"Error: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
         finally:
             mt5.shutdown()
             self.performance.print_summary()
@@ -785,9 +1171,9 @@ class UltimateTradingBot:
 
 def main():
     """Main entry point"""
-    print("\n" + "═"*70)
-    print("       ULTIMATE MT5 MULTI-SYMBOL TRADING BOT")
-    print("═"*70)
+    print("\n" + "═"*80)
+    print("       ULTIMATE HYBRID SMC + INDICATOR TRADING BOT")
+    print("═"*80)
 
     # Load config or create default
     config = BotConfig()
@@ -801,35 +1187,42 @@ def main():
         print(f"   Login: {login}")
         print(f"   Password: {'*'*len(password)}")
         print(f"   Server: {server}")
-        print("\nRun: python mt5_trend_bot.py")
+        print("\nRun: python hybrid_smc_bot.py")
         return
 
     # Initialize bot
-    bot = UltimateTradingBot(config)
+    bot = HybridSMCBot(config)
 
     # Connect
+    print(f"\n🔌 Connecting to {server}...")
     if not bot.connect(login, password, server):
         logger.error("Failed to connect")
+        input("\nPress Enter to exit...")
         return
 
     # Print config
-    print("\n" + "═"*70)
+    print("\n" + "═"*80)
     print("              CONFIGURATION")
-    print("═"*70)
-    print(f"\nSymbols:")
+    print("═"*80)
+    print(f"\n📊 SYMBOLS:")
     print(f"  Metals:    {', '.join(config.get('symbols.metals', []))}")
     print(f"  Currencies: {', '.join(config.get('symbols.currencies', []))}")
     print(f"  Crypto:    {', '.join(config.get('symbols.crypto', []))}")
-    print(f"\nStrategy:")
-    print(f"  SMA: {bot.short_ma}/{bot.long_ma} Crossover")
-    print(f"  ADX: Period={bot.adx_period}, Minimum={bot.adx_min}")
-    print(f"  ATR: Period={bot.atr_period}, SL={bot.atr_sl_mult}x, TP={bot.atr_tp_mult}x")
-    print(f"\nTrailing Stop: {'ON' if bot.trailing_enabled else 'OFF'}")
-    if bot.trailing_enabled:
-        print(f"  Activation: {bot.trailing_activation} pips")
-        print(f"  Trail Distance: {bot.trailing_distance} pips")
-    print("═"*70)
-    print("\nStarting bot...\n")
+    print(f"\n🎯 STRATEGY:")
+    print(f"  • SMC Structure Detection")
+    print(f"  • Liquidity Sweeps")
+    print(f"  • Break of Structure (BOS)")
+    print(f"  • Displacement Filter")
+    print(f"  • ADX > {bot.adx_min} Confirmation")
+    print(f"  • ATR-Based SL/TP ({bot.atr_sl_mult}x / {bot.atr_tp_mult}x)")
+    print(f"\n⚙️  SETTINGS:")
+    print(f"  Min Confidence: {bot.min_confidence}/10")
+    print(f"  Require BOS: {bot.require_bos}")
+    print(f"  Require Displacement: {bot.require_displacement}")
+    print(f"  Session Filter: {'ON' if bot.use_session_filter else 'OFF'}")
+    print(f"  Trailing Stop: {'ON' if bot.trailing_enabled else 'OFF'}")
+    print("═"*80)
+    print("\n🚀 Starting bot...\n")
 
     bot.run()
 
