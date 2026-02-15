@@ -1,0 +1,24 @@
+{
+  "mt5": {
+    "login": null,
+    "password": null,
+    "server": null,
+    "path": "C:\\Program Files\\MetaTrader 5\\terminal64.exe"
+  },
+  "trading": {
+    "symbols": ["EURUSD", "GBPUSD", "XAUUSD", "USDJPY"],
+    "timeframe": "H1",
+    "fast_ma_period": 50,
+    "slow_ma_period": 200,
+    "ma_type": "SMA",
+    "risk_percent": 1.0,
+    "max_spread_pips": 3.0,
+    "trailing_stop_pips": 25,
+    "trailing_activation_pips": 40,
+    "magic_number": 123456
+  },
+  "general": {
+    "check_interval_seconds": 300,
+    "log_level": "INFO"
+  }
+}
