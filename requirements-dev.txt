@@ -1,0 +1,18 @@
+# MT5 Trend Bot - requirements-dev.txt
+# Development, testing, linting, formatting and type checking tools
+
+-r requirements.txt         # include all runtime dependencies
+
+# Testing
+pytest>=8.3.0
+pytest-cov>=5.0.0
+
+# Code quality & formatting (very popular combination in 2025–2026)
+ruff>=0.6.0                 # fast linter + formatter (replaces black + flake8 + isort)
+mypy>=1.11.0                # static type checking
+
+# Optional: pre-commit hooks for automatic checks on commit
+pre-commit>=4.0.0
+
+# Optional: visualization / research helpers
+matplotlib>=3.9.0           # equity curves, indicator plots
