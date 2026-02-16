@@ -20,7 +20,7 @@ pip-delete-this-directory.txt
 # Secrets & configs with credentials
 .env
 *.env.*
-config.json               # ← only if it contains real login/password
+
 *.secret.json
 
 # Logs & runtime data
