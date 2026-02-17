@@ -8,7 +8,7 @@
 """
 
 import sys
-import pkg_resources
+import pkg
 import json
 import os
 from datetime import datetime, timedelta
@@ -16,22 +16,6 @@ import time
 import logging
 from threading import Lock
 import getpass
-
-# Check required packages
-required_packages = {'MetaTrader5', 'pandas', 'numpy'}
-installed_packages = {pkg.key for pkg in pkg_resources.working_set}
-missing = required_packages - installed_packages
-
-if missing:
-    print("\n" + "="*60)
-    print("ERROR: Missing required packages!")
-    print("="*60)
-    print("Please install manually:")
-    for pkg in missing:
-        print(f"  pip install {pkg}")
-    print("\n" + "="*60)
-    sys.exit(1)
-
 import MetaTrader5 as mt5
 import pandas as pd
 import numpy as np
